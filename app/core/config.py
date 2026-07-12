@@ -42,8 +42,28 @@ class Settings(BaseSettings):
         default=12000,
         validation_alias="RAG_MAX_CONTEXT_CHARS",
     )
+    ingest_wrk_path: Path = Field(
+        default_factory=lambda: CONFIG_DIR / "wrk",
+        validation_alias="INGEST_WRK_PATH",
+    )
+    ingest_downloads_path: Path = Field(
+        default_factory=lambda: CONFIG_DIR / "downloads",
+        validation_alias="INGEST_DOWNLOADS_PATH",
+    )
+    ingest_state_path: Path = Field(
+        default_factory=lambda: CONFIG_DIR / "ingest_state.json",
+        validation_alias="INGEST_STATE_PATH",
+    )
+    ingest_max_workers: int = Field(default=4, validation_alias="INGEST_MAX_WORKERS")
 
-    @field_validator("search_index_path", "content_index_path", mode="before")
+    @field_validator(
+        "search_index_path",
+        "content_index_path",
+        "ingest_wrk_path",
+        "ingest_downloads_path",
+        "ingest_state_path",
+        mode="before",
+    )
     @classmethod
     def resolve_relative_paths(cls, value: str | Path) -> Path:
         path = Path(value)
