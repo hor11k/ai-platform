@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +33,23 @@ class Settings(BaseSettings):
         default_factory=lambda: CONFIG_DIR / "files.txt",
         validation_alias="SEARCH_INDEX_PATH",
     )
+    content_index_path: Path = Field(
+        default_factory=lambda: CONFIG_DIR / "content",
+        validation_alias="CONTENT_INDEX_PATH",
+    )
+    rag_max_sources: int = Field(default=5, validation_alias="RAG_MAX_SOURCES")
+    rag_max_context_chars: int = Field(
+        default=12000,
+        validation_alias="RAG_MAX_CONTEXT_CHARS",
+    )
+
+    @field_validator("search_index_path", "content_index_path", mode="before")
+    @classmethod
+    def resolve_relative_paths(cls, value: str | Path) -> Path:
+        path = Path(value)
+        if path.is_absolute():
+            return path
+        return PROJECT_ROOT / path
 
 
 @lru_cache

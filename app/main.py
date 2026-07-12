@@ -4,6 +4,7 @@ import typer
 from rich.console import Console
 
 from app.commands.analyze import register as register_analyze
+from app.commands.ask import register as register_ask
 from app.commands.find import register as register_find
 from app.core.config import get_settings
 from app.core.logger import setup_logging
@@ -37,6 +38,7 @@ def main(
 
 register_find(app)
 register_analyze(app)
+register_ask(app)
 
 
 if __name__ == "__main__":

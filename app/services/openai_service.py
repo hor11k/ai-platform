@@ -12,6 +12,8 @@ from openai import (
 from app.exceptions import OpenAIServiceError
 from app.models.document_analysis import DocumentAnalysis
 from app.prompts.analyze import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from app.prompts.ask import SYSTEM_PROMPT as ASK_SYSTEM_PROMPT
+from app.prompts.ask import USER_PROMPT_TEMPLATE as ASK_USER_PROMPT_TEMPLATE
 
 
 class OpenAIService:
@@ -78,6 +80,53 @@ class OpenAIService:
             msg = "OpenAI returned an empty analysis response."
             raise ValueError(msg)
         return parsed
+
+    def answer_with_context(self, question: str, context: str) -> str:
+        request_size = len(question) + len(context)
+        started_at = perf_counter()
+
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": ASK_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": ASK_USER_PROMPT_TEMPLATE.format(
+                            question=question,
+                            context=context,
+                        ),
+                    },
+                ],
+            )
+        except AuthenticationError as exc:
+            self._log_request(request_size, started_at, failed=True)
+            raise OpenAIServiceError(
+                "OpenAI authentication failed. Verify OPENAI_API_KEY in config/.env."
+            ) from exc
+        except RateLimitError as exc:
+            self._log_request(request_size, started_at, failed=True)
+            raise OpenAIServiceError(
+                "OpenAI rate limit exceeded. Wait a moment and try again."
+            ) from exc
+        except APIConnectionError as exc:
+            self._log_request(request_size, started_at, failed=True)
+            raise OpenAIServiceError(
+                "Could not connect to OpenAI. Check your network and OPENAI_BASE_URL."
+            ) from exc
+        except APIStatusError as exc:
+            self._log_request(request_size, started_at, failed=True)
+            raise OpenAIServiceError(
+                f"OpenAI API error ({exc.status_code}): {exc.message}"
+            ) from exc
+
+        self._log_request(request_size, started_at, failed=False)
+
+        content = response.choices[0].message.content
+        if not content:
+            msg = "OpenAI returned an empty answer."
+            raise ValueError(msg)
+        return content.strip()
 
     def _log_request(
         self,
