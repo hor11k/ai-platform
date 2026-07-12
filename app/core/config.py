@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     openai_base_url: str | None = Field(
         default=None, validation_alias="OPENAI_BASE_URL"
     )
+    openai_model: str = Field(default="gpt-5.5", validation_alias="OPENAI_MODEL")
+    openai_timeout: float = Field(default=120.0, validation_alias="OPENAI_TIMEOUT")
 
     search_index_path: Path = Field(
         default_factory=lambda: CONFIG_DIR / "files.txt",

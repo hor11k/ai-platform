@@ -3,6 +3,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from app.commands.analyze import register as register_analyze
 from app.commands.find import register as register_find
 from app.core.config import get_settings
 from app.core.logger import setup_logging
@@ -35,6 +36,7 @@ def main(
 
 
 register_find(app)
+register_analyze(app)
 
 
 if __name__ == "__main__":
