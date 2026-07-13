@@ -1,3 +1,5 @@
+import os
+
 from app.core.config import PROJECT_ROOT, get_settings
 
 
@@ -48,3 +50,31 @@ def test_ingest_max_workers_default(monkeypatch) -> None:
     settings = get_settings()
 
     assert settings.ingest_max_workers == 4
+
+
+def test_openai_base_url_empty_string_normalizes_to_none(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.openai_base_url is None
+
+
+def test_openai_base_url_whitespace_normalizes_to_none(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_BASE_URL", "   ")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.openai_base_url is None
+
+
+def test_openai_base_url_empty_env_is_removed_for_openai_client(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.openai_base_url is None
+    assert "OPENAI_BASE_URL" not in os.environ

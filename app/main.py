@@ -7,6 +7,8 @@ from app.commands.analyze import register as register_analyze
 from app.commands.ask import register as register_ask
 from app.commands.find import register as register_find
 from app.commands.ingest import register as register_ingest
+from app.commands.inbox import register as register_inbox
+from app.commands.open import register as register_open
 from app.core.config import get_settings
 from app.core.logger import setup_logging
 
@@ -41,6 +43,10 @@ register_find(app)
 register_analyze(app)
 register_ask(app)
 register_ingest(app)
+register_inbox(app)
+register_open(app)
+
+REGISTERED_COMMAND_NAMES = ("find", "analyze", "ask", "ingest", "inbox", "open")
 
 
 if __name__ == "__main__":

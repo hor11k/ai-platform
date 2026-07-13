@@ -7,7 +7,9 @@ from rich.table import Table
 
 from app.core.config import get_settings
 from app.core.text import highlight_terms
+from app.models.session_state import SessionEntry
 from app.services.search_service import SearchService
+from app.services.session_store import SessionStore
 
 console = Console()
 
@@ -61,3 +63,11 @@ def register(app: typer.Typer) -> None:
         else:
             limit_note = f" (max {service.max_results})"
         console.print(f"\n[dim]{len(results)} result(s){limit_note}[/dim]")
+        SessionStore.save_results(
+            settings.session_state_path,
+            command="find",
+            results=[
+                SessionEntry(path=result.path, filename=result.filename)
+                for result in results
+            ],
+        )

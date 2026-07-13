@@ -2,6 +2,7 @@ from app.models.ask_response import AskResponse
 from app.services.context_builder import (
     ContextChunk,
     ContextResult,
+    RetrievalDebug,
     SourceGroupResult,
 )
 from app.services.rag_service import RagService
@@ -44,6 +45,7 @@ def _make_chunk(
         file_date=20240801,
         version_number=2,
         exact_filename_match=exact,
+        reason="filename match (all terms)",
     )
 
 
@@ -56,6 +58,14 @@ def test_rag_service_returns_answer_sources_and_confidence() -> None:
             SourceGroupResult(primary=primary, alternate_paths=("/data/loan-v2.docx",))
         ],
         confidence=88,
+        retrieval_debug=[
+            RetrievalDebug(
+                score=200.0,
+                reason="filename match (all terms)",
+                filename="loan-2024.docx",
+                path="/data/loan-2024.docx",
+            )
+        ],
     )
     openai = _StubOpenAI("The latest loan contract is stored in /data/loan-2024.docx.")
     service = RagService(
@@ -77,7 +87,12 @@ def test_rag_service_returns_answer_sources_and_confidence() -> None:
 def test_rag_service_handles_no_context() -> None:
     service = RagService(
         context_builder=_StubContextBuilder(
-            ContextResult(chunks=[], source_groups=[], confidence=0)
+            ContextResult(
+                chunks=[],
+                source_groups=[],
+                confidence=0,
+                retrieval_debug=[],
+            )
         ),
         openai_service=_StubOpenAI("should not be called"),  # type: ignore[arg-type]
     )

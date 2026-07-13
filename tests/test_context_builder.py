@@ -6,11 +6,14 @@ from app.services.context_builder import ContextBuilder
 from app.services.search_service import SearchService
 
 FILES_INDEX = """\
+/Volumes/DISK h3r/WRK/19 Химки/Договор займа Химки 2024.docx
+/Volumes/DISK h3r/WRK/19 Химки/20200828 Договор займа Химки.docx
+/Volumes/DISK h3r/WRK/19 Химки/20200828 Договор займа Химки_v_2.docx
 /Volumes/DISK h3r/WRK/03 Match Point/Химки/Договор займа Химки 2024.docx
-/Volumes/DISK h3r/WRK/03 Match Point/Химки/20200828 Договор займа Химки.docx
-/Volumes/DISK h3r/WRK/03 Match Point/Химки/20200828 Договор займа Химки_v_2.docx
 /Volumes/DISK h3r/WRK/18 ВТБ СПОРТ/Справка ВТБ Спорт.docx
 /Volumes/DISK h3r/WRK/18 ВТБ СПОРТ/Бюджет ВТБ Спорт.docx
+/Volumes/DISK h3r/WRK/00 Общее/Миграция/ДК по договорам управления.docx
+/Volumes/DISK h3r/WRK/01 МСТК/Вопросы по договору на проектирование МСТК (003).docx
 """
 
 CONTENT_FILES = {
@@ -23,7 +26,13 @@ CONTENT_FILES = {
         "Справка по проекту ВТБ Спорт. Основные риски и сроки реализации."
     ),
     "Бюджет ВТБ Спорт.docx.txt": "Бюджет проекта ВТБ Спорт на 2025 год.",
+    "ДК по договорам управления.docx.txt": "Договор управления по проекту Фордевинд.",
+    "Вопросы по договору на проектирование МСТК (003).docx.txt": (
+        "Вопросы по договору на проектирование МСТК."
+    ),
 }
+
+KHIMKI_LOAN_QUESTION = "Где лежит последний договор займа по Химкам?"
 
 
 @pytest.fixture
@@ -124,3 +133,37 @@ def test_context_builder_empty_question(builder_kwargs) -> None:
 
     assert result.chunks == []
     assert result.confidence == 0
+    assert result.retrieval_debug == []
+
+
+def test_context_builder_khimki_loan_prefers_loan_contract(builder_kwargs) -> None:
+    builder = ContextBuilder(**builder_kwargs)
+
+    result = builder.build(KHIMKI_LOAN_QUESTION)
+
+    assert result.chunks
+    top = result.chunks[0]
+    assert "Договор займа" in top.filename
+    assert "Химки" in top.path
+    assert top.reason.startswith("filename")
+    assert result.retrieval_debug
+    assert result.retrieval_debug[0].filename == top.filename
+    assert "договорам управления" not in top.filename.lower()
+
+
+def test_context_builder_khimki_loan_debug_includes_reason(builder_kwargs) -> None:
+    builder = ContextBuilder(**builder_kwargs)
+
+    result = builder.build(KHIMKI_LOAN_QUESTION)
+
+    assert any(item.reason.startswith("filename") for item in result.retrieval_debug)
+    assert all(item.filename for item in result.retrieval_debug)
+    assert all(item.score > 0 for item in result.retrieval_debug)
+
+
+def test_context_builder_khimki_loan_skips_content_fallback(builder_kwargs) -> None:
+    builder = ContextBuilder(**builder_kwargs)
+
+    result = builder.build(KHIMKI_LOAN_QUESTION)
+
+    assert not any(item.reason.startswith("content") for item in result.retrieval_debug)

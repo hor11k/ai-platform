@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -55,6 +56,36 @@ class Settings(BaseSettings):
         validation_alias="INGEST_STATE_PATH",
     )
     ingest_max_workers: int = Field(default=4, validation_alias="INGEST_MAX_WORKERS")
+    session_state_path: Path = Field(
+        default_factory=lambda: CONFIG_DIR / "session.json",
+        validation_alias="SESSION_STATE_PATH",
+    )
+    exchange_server: str | None = Field(
+        default=None, validation_alias="EXCHANGE_SERVER"
+    )
+    exchange_username: str | None = Field(
+        default=None, validation_alias="EXCHANGE_USERNAME"
+    )
+    exchange_email: str | None = Field(
+        default=None, validation_alias="EXCHANGE_EMAIL"
+    )
+    exchange_password: str | None = Field(
+        default=None, validation_alias="EXCHANGE_PASSWORD"
+    )
+    exchange_autodiscover_cache_path: Path = Field(
+        default_factory=lambda: CONFIG_DIR / "exchange_autodiscover.json",
+        validation_alias="EXCHANGE_AUTODISCOVER_CACHE_PATH",
+    )
+
+    @field_validator("openai_base_url", "exchange_server", "exchange_email", mode="before")
+    @classmethod
+    def normalize_optional_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
     @field_validator(
         "search_index_path",
@@ -62,6 +93,8 @@ class Settings(BaseSettings):
         "ingest_wrk_path",
         "ingest_downloads_path",
         "ingest_state_path",
+        "session_state_path",
+        "exchange_autodiscover_cache_path",
         mode="before",
     )
     @classmethod
@@ -74,4 +107,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if settings.openai_base_url is None:
+        os.environ.pop("OPENAI_BASE_URL", None)
+    return settings

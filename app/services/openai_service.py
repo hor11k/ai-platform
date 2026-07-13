@@ -15,6 +15,23 @@ from app.prompts.analyze import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from app.prompts.ask import SYSTEM_PROMPT as ASK_SYSTEM_PROMPT
 from app.prompts.ask import USER_PROMPT_TEMPLATE as ASK_USER_PROMPT_TEMPLATE
 
+_OPENAI_API_ERRORS = (
+    AuthenticationError,
+    RateLimitError,
+    APIConnectionError,
+    APIStatusError,
+)
+
+
+def _openai_error_message(exc: Exception) -> str:
+    message = str(exc)
+    cause = exc.__cause__
+    if cause is not None:
+        cause_message = str(cause)
+        if cause_message and cause_message not in message:
+            return f"{message}: {cause_message}"
+    return message
+
 
 class OpenAIService:
     """Send document text to OpenAI and return structured analysis."""
@@ -52,26 +69,12 @@ class OpenAIService:
                 ],
                 response_format=DocumentAnalysis,
             )
-        except AuthenticationError as exc:
-            self._log_request(document_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                "OpenAI authentication failed. Verify OPENAI_API_KEY in config/.env."
-            ) from exc
-        except RateLimitError as exc:
-            self._log_request(document_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                "OpenAI rate limit exceeded. Wait a moment and try again."
-            ) from exc
-        except APIConnectionError as exc:
-            self._log_request(document_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                "Could not connect to OpenAI. Check your network and OPENAI_BASE_URL."
-            ) from exc
-        except APIStatusError as exc:
-            self._log_request(document_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                f"OpenAI API error ({exc.status_code}): {exc.message}"
-            ) from exc
+        except _OPENAI_API_ERRORS as exc:
+            self._raise_openai_service_error(
+                exc,
+                request_size=document_size,
+                started_at=started_at,
+            )
 
         self._log_request(document_size, started_at, failed=False)
 
@@ -99,26 +102,12 @@ class OpenAIService:
                     },
                 ],
             )
-        except AuthenticationError as exc:
-            self._log_request(request_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                "OpenAI authentication failed. Verify OPENAI_API_KEY in config/.env."
-            ) from exc
-        except RateLimitError as exc:
-            self._log_request(request_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                "OpenAI rate limit exceeded. Wait a moment and try again."
-            ) from exc
-        except APIConnectionError as exc:
-            self._log_request(request_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                "Could not connect to OpenAI. Check your network and OPENAI_BASE_URL."
-            ) from exc
-        except APIStatusError as exc:
-            self._log_request(request_size, started_at, failed=True)
-            raise OpenAIServiceError(
-                f"OpenAI API error ({exc.status_code}): {exc.message}"
-            ) from exc
+        except _OPENAI_API_ERRORS as exc:
+            self._raise_openai_service_error(
+                exc,
+                request_size=request_size,
+                started_at=started_at,
+            )
 
         self._log_request(request_size, started_at, failed=False)
 
@@ -127,6 +116,22 @@ class OpenAIService:
             msg = "OpenAI returned an empty answer."
             raise ValueError(msg)
         return content.strip()
+
+    def _raise_openai_service_error(
+        self,
+        exc: Exception,
+        *,
+        request_size: int,
+        started_at: float,
+    ) -> None:
+        message = _openai_error_message(exc)
+        self._log_request(request_size, started_at, failed=True)
+        logger.error(
+            "OpenAI error type={exc_type} message={exc_message}",
+            exc_type=type(exc).__name__,
+            exc_message=message,
+        )
+        raise OpenAIServiceError(message) from exc
 
     def _log_request(
         self,

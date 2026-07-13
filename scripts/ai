@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+error() {
+    echo "ai-platform error: $*" >&2
+    exit 1
+}
+
+resolve_path() {
+    local path="$1"
+    while [ -L "$path" ]; do
+        local link_dir
+        link_dir="$(cd "$(dirname "$path")" && pwd)"
+        path="$(readlink "$path")"
+        case "$path" in
+            /*) ;;
+            *) path="$link_dir/$path" ;;
+        esac
+    done
+    printf '%s\n' "$path"
+}
+
+is_ai_platform_root() {
+    local dir="$1"
+    [ -f "$dir/pyproject.toml" ] && grep -q 'name = "ai-platform"' "$dir/pyproject.toml"
+}
+
+find_project_root() {
+    if [ -n "${AI_PLATFORM_ROOT:-}" ]; then
+        if is_ai_platform_root "$AI_PLATFORM_ROOT"; then
+            printf '%s\n' "$(cd "$AI_PLATFORM_ROOT" && pwd)"
+            return 0
+        fi
+        error "AI_PLATFORM_ROOT is set but is not an ai-platform project: $AI_PLATFORM_ROOT"
+    fi
+
+    local script_path script_dir candidate
+    script_path="$(resolve_path "$0")"
+    script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+
+    for candidate in \
+        "$script_dir/.." \
+        "$script_dir/../../ai-platform" \
+        "$script_dir/../../../ai-platform"; do
+        if is_ai_platform_root "$candidate"; then
+            printf '%s\n' "$(cd "$candidate" && pwd)"
+            return 0
+        fi
+    done
+
+    local dir="$script_dir"
+    while [ "$dir" != "/" ]; do
+        if is_ai_platform_root "$dir"; then
+            printf '%s\n' "$(cd "$dir" && pwd)"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+
+    error "Could not find the ai-platform project root.
+
+Set AI_PLATFORM_ROOT to the project directory, or install the launcher with:
+  $(dirname "$script_path")/install.sh
+
+Expected a directory containing pyproject.toml with name = \"ai-platform\"."
+}
+
+PROJECT_ROOT="$(find_project_root)"
+VENV_DIR="$PROJECT_ROOT/.venv"
+ACTIVATE_SCRIPT="$VENV_DIR/bin/activate"
+CLI_ENTRY="$VENV_DIR/bin/ai"
+
+if [ ! -f "$ACTIVATE_SCRIPT" ]; then
+    error "Virtual environment not found at $VENV_DIR
+
+Create and install the project with:
+  cd $PROJECT_ROOT
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -e \".[dev]\""
+fi
+
+# shellcheck source=/dev/null
+source "$ACTIVATE_SCRIPT"
+
+if [ ! -x "$CLI_ENTRY" ]; then
+    error "ai-platform CLI is not installed in $VENV_DIR
+
+Install the project with:
+  cd $PROJECT_ROOT
+  source .venv/bin/activate
+  pip install -e \".[dev]\""
+fi
+
+exec "$CLI_ENTRY" "$@"

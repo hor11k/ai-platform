@@ -1,4 +1,4 @@
-from app.models.ask_response import AskResponse, SourceGroup
+from app.models.ask_response import AskResponse, RetrievalDebugItem, SourceGroup
 from app.services.context_builder import ContextBuilder
 from app.services.openai_service import OpenAIService
 
@@ -26,6 +26,7 @@ class RagService:
                 confidence=0,
                 source_groups=[],
                 sources=[],
+                retrieval_debug=[],
             )
 
         context = ContextBuilder.format_context(result.chunks)
@@ -46,4 +47,13 @@ class RagService:
             confidence=result.confidence,
             source_groups=source_groups,
             sources=sources,
+            retrieval_debug=[
+                RetrievalDebugItem(
+                    score=item.score,
+                    reason=item.reason,
+                    filename=item.filename,
+                    path=item.path,
+                )
+                for item in result.retrieval_debug
+            ],
         )

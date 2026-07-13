@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 
 from app.core.config import get_settings
 from app.main import app
-from app.models.ask_response import AskResponse, SourceGroup
+from app.models.ask_response import AskResponse, RetrievalDebugItem, SourceGroup
 
 runner = CliRunner()
 
@@ -31,6 +31,14 @@ def test_ask_command_renders_answer(tmp_path: Path, monkeypatch) -> None:
             )
         ],
         sources=["/data/loan-2024.docx"],
+        retrieval_debug=[
+            RetrievalDebugItem(
+                score=290.0,
+                reason="filename match (all terms)",
+                filename="loan-2024.docx",
+                path="/data/loan-2024.docx",
+            )
+        ],
     )
 
     with patch("app.commands.ask.RagService.ask", return_value=response):
@@ -48,6 +56,8 @@ def test_ask_command_renders_answer(tmp_path: Path, monkeypatch) -> None:
     assert "loan-2024.docx" in result.stdout
     assert "Older versions:" in result.stdout
     assert "loan-v2.docx" in result.stdout
+    assert "Retrieved documents" in result.stdout
+    assert "filename match" in result.stdout
 
 
 def test_ask_command_warns_on_low_confidence(monkeypatch) -> None:

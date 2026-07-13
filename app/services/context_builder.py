@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,8 +9,39 @@ from app.core.document_versioning import (
     newest_sort_key,
     version_group_key,
 )
-from app.core.text import normalize_text, parse_search_terms
+from app.core.text import normalize_text
 from app.services.search_service import SearchService
+
+BOOSTED_TERMS = frozenset({"договор", "займа", "химки"})
+STOP_WORDS = frozenset(
+    {
+        "где",
+        "лежит",
+        "лежат",
+        "последний",
+        "последняя",
+        "последнее",
+        "последние",
+        "по",
+        "в",
+        "на",
+        "какой",
+        "какая",
+        "какие",
+        "что",
+        "кто",
+        "когда",
+        "как",
+        "найди",
+        "найти",
+        "покажи",
+        "есть",
+        "ли",
+        "the",
+        "a",
+        "an",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +55,15 @@ class ContextChunk:
     file_date: int | None
     version_number: int
     exact_filename_match: bool
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalDebug:
+    score: float
+    reason: str
+    filename: str
+    path: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,16 +77,23 @@ class ContextResult:
     chunks: list[ContextChunk]
     source_groups: list[SourceGroupResult]
     confidence: int
+    retrieval_debug: list[RetrievalDebug]
 
 
 class ContextBuilder:
     """Build ranked document context from local path and content indexes."""
 
+    FILENAME_ALL_TERMS_SCORE = 200.0
+    FILENAME_PARTIAL_SCORE = 120.0
+    PROJECT_ALL_TERMS_SCORE = 80.0
+    PROJECT_PARTIAL_SCORE = 50.0
+    PATH_MATCH_SCORE = 25.0
+    BOOSTED_TERM_FILENAME_BONUS = 30.0
+    BOOSTED_TERM_PROJECT_BONUS = 15.0
     CONTENT_HIT_WEIGHT = 3.0
     METADATA_ONLY_WEIGHT = 0.5
-    EXACT_FILENAME_BONUS = 15.0
     EXCERPT_MAX_CHARS = 1500
-    LOW_CONFIDENCE_THRESHOLD = 70
+    LEXICAL_STRONG_MATCH_SCORE = 50.0
 
     def __init__(
         self,
@@ -61,20 +109,31 @@ class ContextBuilder:
         self._files_index: list[str] | None = None
 
     def build(self, question: str) -> ContextResult:
-        terms = parse_search_terms(question)
+        terms = self._extract_retrieval_terms(question)
         if not terms:
-            return ContextResult(chunks=[], source_groups=[], confidence=0)
+            return ContextResult(
+                chunks=[],
+                source_groups=[],
+                confidence=0,
+                retrieval_debug=[],
+            )
 
         chunks: dict[str, ContextChunk] = {}
+        retrieval_debug: list[RetrievalDebug] = []
 
-        for result in self._search_service.search(question):
+        for result in self._search_service.search_words(terms):
+            score, reason = self._score_lexical_hit(
+                filename=result.filename,
+                project=result.project,
+                path=result.path,
+                terms=terms,
+            )
+            if score <= 0:
+                continue
+
             content = self._load_content_text(result.filename)
             chunk_content = content or result.path
-            weight = 1.0 if content else self.METADATA_ONLY_WEIGHT
             exact_match = is_exact_filename_match(result.filename, terms)
-            score = result.score * weight
-            if exact_match:
-                score += self.EXACT_FILENAME_BONUS
             self._upsert_chunk(
                 chunks,
                 path=result.path,
@@ -83,20 +142,39 @@ class ContextBuilder:
                 score=score,
                 has_content=content is not None,
                 exact_filename_match=exact_match,
+                reason=reason,
+            )
+            retrieval_debug.append(
+                RetrievalDebug(
+                    score=score,
+                    reason=reason,
+                    filename=result.filename,
+                    path=result.path,
+                )
             )
 
-        for chunk in self._search_content_index(terms):
-            exact_match = is_exact_filename_match(chunk.filename, terms)
-            score = chunk.score + (self.EXACT_FILENAME_BONUS if exact_match else 0.0)
-            self._upsert_chunk(
-                chunks,
-                path=chunk.path,
-                filename=chunk.filename,
-                content=chunk.content,
-                score=score,
-                has_content=chunk.has_content,
-                exact_filename_match=exact_match,
-            )
+        if self._needs_content_fallback(chunks, terms):
+            for chunk in self._search_content_index(terms):
+                self._upsert_chunk(
+                    chunks,
+                    path=chunk.path,
+                    filename=chunk.filename,
+                    content=chunk.content,
+                    score=chunk.score,
+                    has_content=chunk.has_content,
+                    exact_filename_match=chunk.exact_filename_match,
+                    reason=chunk.reason,
+                )
+                retrieval_debug.append(
+                    RetrievalDebug(
+                        score=chunk.score,
+                        reason=chunk.reason,
+                        filename=chunk.filename,
+                        path=chunk.path,
+                    )
+                )
+
+        retrieval_debug.sort(key=lambda item: item.score, reverse=True)
 
         grouped = self._group_versions(list(chunks.values()))
         primaries = self._select_primary_chunks(grouped)
@@ -107,7 +185,102 @@ class ContextBuilder:
             chunks=trimmed,
             source_groups=grouped,
             confidence=confidence,
+            retrieval_debug=retrieval_debug,
         )
+
+    def _extract_retrieval_terms(self, question: str) -> list[str]:
+        cleaned_question = normalize_text(re.sub(r"[^\w\s]", " ", question))
+        terms: list[str] = []
+
+        for boosted in sorted(BOOSTED_TERMS):
+            if self._question_mentions_term(cleaned_question, boosted):
+                terms.append(boosted)
+
+        for term in cleaned_question.split():
+            if not term or term in STOP_WORDS or term in terms:
+                continue
+            terms.append(term)
+
+        return terms
+
+    def _question_mentions_term(self, cleaned_question: str, term: str) -> bool:
+        if term in cleaned_question:
+            return True
+        stem = term[:4] if len(term) >= 4 else term
+        return any(word.startswith(stem) for word in cleaned_question.split())
+
+    def _score_lexical_hit(
+        self,
+        *,
+        filename: str,
+        project: str,
+        path: str,
+        terms: list[str],
+    ) -> tuple[float, str]:
+        norm_filename = normalize_text(filename)
+        norm_project = normalize_text(project)
+        norm_path = normalize_text(path)
+
+        filename_terms = [term for term in terms if term in norm_filename]
+        project_terms = [term for term in terms if term in norm_project]
+        path_terms = [term for term in terms if term in norm_path]
+
+        boosted_in_filename = sum(1 for term in BOOSTED_TERMS if term in norm_filename)
+        boosted_in_project = sum(1 for term in BOOSTED_TERMS if term in norm_project)
+
+        if len(filename_terms) == len(terms):
+            score = self.FILENAME_ALL_TERMS_SCORE + (
+                boosted_in_filename * self.BOOSTED_TERM_FILENAME_BONUS
+            )
+            reason = "filename match (all terms)"
+        elif filename_terms:
+            score = self.FILENAME_PARTIAL_SCORE + (len(filename_terms) * 10.0) + (
+                boosted_in_filename * self.BOOSTED_TERM_FILENAME_BONUS
+            )
+            reason = f"filename match ({len(filename_terms)}/{len(terms)} terms)"
+        elif len(project_terms) == len(terms):
+            score = self.PROJECT_ALL_TERMS_SCORE + (
+                boosted_in_project * self.BOOSTED_TERM_PROJECT_BONUS
+            )
+            reason = "project match (all terms)"
+        elif project_terms:
+            score = self.PROJECT_PARTIAL_SCORE + (len(project_terms) * 8.0) + (
+                boosted_in_project * self.BOOSTED_TERM_PROJECT_BONUS
+            )
+            reason = f"project match ({len(project_terms)}/{len(terms)} terms)"
+        elif path_terms:
+            score = self.PATH_MATCH_SCORE + (len(path_terms) * 3.0)
+            reason = f"path match ({len(path_terms)}/{len(terms)} terms)"
+        else:
+            return 0.0, ""
+
+        return score, reason
+
+    def _needs_content_fallback(
+        self,
+        chunks: dict[str, ContextChunk],
+        terms: list[str],
+    ) -> bool:
+        if not chunks:
+            return True
+
+        top_chunk = max(chunks.values(), key=lambda chunk: chunk.score)
+        if top_chunk.score >= self.LEXICAL_STRONG_MATCH_SCORE and (
+            top_chunk.reason.startswith("filename")
+            or top_chunk.reason.startswith("project")
+        ):
+            return False
+
+        boosted_hits = sum(
+            1
+            for term in BOOSTED_TERMS
+            if any(
+                term in normalize_text(chunk.filename)
+                or term in normalize_text(chunk.path)
+                for chunk in chunks.values()
+            )
+        )
+        return boosted_hits < 2
 
     def _upsert_chunk(
         self,
@@ -119,6 +292,7 @@ class ContextBuilder:
         score: float,
         has_content: bool,
         exact_filename_match: bool,
+        reason: str,
     ) -> None:
         candidate = self._make_chunk(
             path=path,
@@ -127,6 +301,7 @@ class ContextBuilder:
             score=score,
             has_content=has_content,
             exact_filename_match=exact_filename_match,
+            reason=reason,
         )
         existing = chunks.get(path)
         if existing is None or self._rank_chunk(candidate) > self._rank_chunk(existing):
@@ -141,6 +316,7 @@ class ContextBuilder:
         score: float,
         has_content: bool,
         exact_filename_match: bool,
+        reason: str,
     ) -> ContextChunk:
         return ContextChunk(
             path=path,
@@ -152,6 +328,7 @@ class ContextBuilder:
             file_date=extract_file_date(filename),
             version_number=extract_version_number(filename),
             exact_filename_match=exact_filename_match,
+            reason=reason,
         )
 
     def _rank_chunk(self, chunk: ContextChunk) -> tuple[float, int, int, int]:
@@ -201,13 +378,13 @@ class ContextBuilder:
                 continue
 
             normalized_text = normalize_text(text)
-            matched_terms = sum(1 for term in terms if term in normalized_text)
-            if matched_terms == 0:
+            matched_terms = [term for term in terms if term in normalized_text]
+            if not matched_terms:
                 continue
 
             filename = content_file.name.removesuffix(".txt")
             path = self._resolve_source_path(filename) or filename
-            score = matched_terms * self.CONTENT_HIT_WEIGHT
+            score = len(matched_terms) * self.CONTENT_HIT_WEIGHT
             hits.append(
                 self._make_chunk(
                     path=path,
@@ -216,6 +393,10 @@ class ContextBuilder:
                     score=score,
                     has_content=True,
                     exact_filename_match=is_exact_filename_match(filename, terms),
+                    reason=(
+                        "content fallback "
+                        f"({len(matched_terms)}/{len(terms)} terms)"
+                    ),
                 )
             )
 
@@ -271,12 +452,14 @@ class ContextBuilder:
         score_factor = min(1.0, top_chunk.score / (40.0 * len(terms)))
         content_factor = sum(1 for chunk in chunks if chunk.has_content) / len(chunks)
         exact_factor = 1.0 if top_chunk.exact_filename_match else 0.6
+        lexical_factor = 1.0 if not top_chunk.reason.startswith("content") else 0.5
 
         confidence = (
-            score_factor * 40.0
+            score_factor * 35.0
             + term_coverage * 35.0
-            + content_factor * 15.0
+            + content_factor * 10.0
             + exact_factor * 10.0
+            + lexical_factor * 10.0
         )
         return min(100, max(0, int(round(confidence))))
 
@@ -317,6 +500,7 @@ class ContextBuilder:
                     file_date=chunk.file_date,
                     version_number=chunk.version_number,
                     exact_filename_match=chunk.exact_filename_match,
+                    reason=chunk.reason,
                 )
             )
             remaining -= len(content)

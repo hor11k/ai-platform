@@ -1,6 +1,13 @@
 from pydantic import BaseModel, Field
 
 
+class RetrievalDebugItem(BaseModel):
+    score: float
+    reason: str
+    filename: str
+    path: str
+
+
 class SourceGroup(BaseModel):
     primary_path: str
     primary_filename: str
@@ -12,3 +19,4 @@ class AskResponse(BaseModel):
     confidence: int = 0
     source_groups: list[SourceGroup] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
+    retrieval_debug: list[RetrievalDebugItem] = Field(default_factory=list)
